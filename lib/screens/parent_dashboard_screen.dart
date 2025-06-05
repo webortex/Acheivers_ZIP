@@ -1,12 +1,20 @@
+import 'package:achiver_app/screens/reports_zone_page.dart';
 import 'package:flutter/material.dart';
 import 'leave_application_screen.dart';
 import 'contact_teacher_screen.dart';
 import 'parent_profile_page.dart';
-import 'progress_page.dart';
 import 'fee_payments_screen.dart';
+import 'parent_progress_page.dart' as parent_progress;
 import '../services/parent_service.dart';
-import 'package:fluttertoast/fluttertoast.dart';
 
+void main() {
+  runApp(
+    const MaterialApp(
+      home: ParentDashboardScreen(),
+      debugShowCheckedModeBanner: false,
+    ),
+  );
+}
 
 class ParentDashboardScreen extends StatefulWidget {
   const ParentDashboardScreen({super.key});
@@ -16,39 +24,42 @@ class ParentDashboardScreen extends StatefulWidget {
 }
 
 class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
-  final ParentService _parentService = ParentService();
-  Map<String, dynamic>? _parentData;
-  bool _isLoading = true;
+  List<Map<String, dynamic>> _children = [];
+  bool _isLoadingChildren = true;
+  String? _childrenError;
+
   @override
   void initState() {
     super.initState();
-    _loadParentData();
-    
-    /* Backend TODO: Fetch parent dashboard data from backend (API call, database read) */
+    _fetchChildren();
   }
 
-Future<void> _loadParentData() async {
+  Future<void> _fetchChildren() async {
+    setState(() {
+      _isLoadingChildren = true;
+      _childrenError = null;
+    });
     try {
-      final parentData = await _parentService.getParentProfile();
-      print("parentData: ${parentData['name']}");
-      if (mounted) {
-        setState(() {
-          _parentData = parentData;
-          _isLoading = false;
-        });
-      }
+      print('Fetching parent profile...');
+      final parentProfile = await ParentService()
+          .getParentProfile()
+          .timeout(const Duration(seconds: 10), onTimeout: () {
+        throw 'Loading children timed out. Please check your connection.';
+      });
+      print('Parent profile fetched: ' + parentProfile.toString());
+      final children =
+          List<Map<String, dynamic>>.from(parentProfile['children'] ?? []);
+      print('Children loaded: ${children.length}');
+      setState(() {
+        _children = children;
+        _isLoadingChildren = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading profile: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      print('Error loading children: $e');
+      setState(() {
+        _childrenError = 'Failed to load children: $e';
+        _isLoadingChildren = false;
+      });
     }
   }
 
@@ -115,9 +126,6 @@ Future<void> _loadParentData() async {
               const SizedBox(height: 20),
               _buildAttendanceAndGrades(),
               const SizedBox(height: 20),
-              _buildUpcomingEvents(),
-              const SizedBox(height: 20),
-              _buildFeesSection(),
             ],
           ),
         ),
@@ -146,9 +154,9 @@ Future<void> _loadParentData() async {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  "${_parentData?['name'] ?? ''}",
-                  style: const TextStyle(
+                const Text(
+                  'Eswar Kumar',
+                  style: TextStyle(
                     color: Colors.white,
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -156,7 +164,7 @@ Future<void> _loadParentData() async {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  "${_parentData?['phone'] ?? ''}",
+                  'CSE-B •21BF1A05A9',
                   style: TextStyle(
                     color: Colors.blue[50],
                     fontSize: 16,
@@ -186,6 +194,106 @@ Future<void> _loadParentData() async {
           ),
         ),
         const SizedBox(height: 12),
+        if (_isLoadingChildren)
+          const Center(child: CircularProgressIndicator()),
+        if (_childrenError != null)
+          Center(
+              child:
+                  Text(_childrenError!, style: TextStyle(color: Colors.red))),
+        if (!_isLoadingChildren && _childrenError == null)
+          GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            childAspectRatio: 1.2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            children: [
+              _buildActionButton(
+                'Leave\nApplication',
+                Icons.event_busy_rounded,
+                Colors.orange[400]!,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const LeaveApplicationScreen(),
+                  ),
+                ),
+              ),
+              _buildActionButton(
+                'Contact\nTeacher',
+                Icons.chat_bubble_outline_rounded,
+                Colors.green[400]!,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ContactTeacherScreen(),
+                  ),
+                ),
+              ),
+              _buildActionButton(
+                'Progress',
+                Icons.assessment_rounded,
+                Colors.purple[400]!,
+                onTap: () async {
+                  if (_children.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('No children found for this parent.')),
+                    );
+                    return;
+                  }
+                  if (_children.length == 1) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            parent_progress.ProgressPage(child: _children[0]),
+                      ),
+                    );
+                  } else {
+                    final selected = await showDialog<Map<String, dynamic>>(
+                      context: context,
+                      builder: (context) {
+                        return SimpleDialog(
+                          title: const Text('Select Child'),
+                          children: _children.map((child) {
+                            final name =
+                                child['name'] ?? child['fullName'] ?? 'Unknown';
+                            return SimpleDialogOption(
+                              onPressed: () => Navigator.pop(context, child),
+                              child: Text(name),
+                            );
+                          }).toList(),
+                        );
+                      },
+                    );
+                    if (selected != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              parent_progress.ProgressPage(child: selected),
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+              _buildActionButton(
+                'Fee\nPayments',
+                Icons.payment_rounded,
+                Colors.blue[400]!,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const FeePaymentsScreen(),
+                  ),
+                ),
+              ),
+            ],
+          ),
         GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -227,7 +335,7 @@ Future<void> _loadParentData() async {
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ProgressPage(),
+                  builder: (context) => ReportsZonePage(),
                 ),
               ),
             ),
@@ -360,140 +468,6 @@ Future<void> _loadParentData() async {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildUpcomingEvents() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Upcoming Events',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 15),
-        ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: 2,
-          itemBuilder: (context, index) {
-            return Card(
-              margin: const EdgeInsets.only(bottom: 10),
-              child: ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.purple[50],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.event, color: Colors.purple[700]),
-                ),
-                title: Text(index == 0
-                    ? 'Parent-Teacher Meeting'
-                    : 'Annual Sports Day'),
-                subtitle: Text(index == 0
-                    ? 'May 15, 2024 • 2:00 PM'
-                    : 'May 20, 2024 • 9:00 AM'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFeesSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Fee Status',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 15),
-        Container(
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey[300]!,
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Term 2 Fees',
-                    style: TextStyle(
-                      color: Colors.grey[800],
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.green[50],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      'Paid',
-                      style: TextStyle(
-                        color: Colors.green[700],
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              LinearProgressIndicator(
-                value: 1.0,
-                backgroundColor: Colors.grey[200],
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.green[400]!),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Paid: ₹25,000',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 14,
-                    ),
-                  ),
-                  Text(
-                    'Due: ₹0',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
